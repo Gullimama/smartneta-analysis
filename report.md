@@ -6,6 +6,7 @@ SmartNeta’s current applications deliver valuable election operations, but the
 
 Key takeaways at a glance:
 - Immediate security hardening and framework upgrades (Q1) to remove critical CVEs
+- Implement testing framework with unit tests, integration tests and E2E tests 
 - Performance uplift via indexes, pooling, caching, pagination; target <200ms p95
 - Lean architecture (no gateways/meshes/buses) appropriate for current scale
 - Full API parity with enhanced consistency and documentation
