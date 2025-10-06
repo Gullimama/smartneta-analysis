@@ -623,6 +623,13 @@ The to-be architecture transforms SmartNeta from a monolithic, legacy system int
 - **Database Cache**: Query result caching and connection pooling
 - **CDN Cache**: Static content caching for improved performance
 
+#### Client-Side Request Shaping (Mobile & Admin UI)
+- **TTL-backed Config Cache**: Application settings and action lists cached client-side with strict TTL and single-flight de-duplication
+- **Guardrails for Heavy Endpoints**: Dashboard and citizen search invoked only with explicit filters; enforce pagination and server-validated bounds
+- **Master Data Strategy**: States/AC/PC/wards/booths fetched on-demand, stored locally with version + TTL; background refresh when stale
+- **Notifications/News**: Centralized polling with shared cache and background refresh to avoid per-view duplication
+- **Debounce & Backoff**: Debounce user searches (300–500ms), apply exponential backoff on retries; honor 429 responses
+
 ## 7. Monitoring & Observability
 
 ### 7.1 Comprehensive Monitoring Stack
@@ -729,168 +736,168 @@ The to-be architecture transforms SmartNeta from a monolithic, legacy system int
 
 #### **Priority 1: Security Vulnerabilities & Framework Upgrades**
 
-**JIRA-001: Backend Framework Security Upgrade**
+1: Backend Framework Security Upgrade
 - Upgrade Spring Boot from 2.0.3 to 3.2+ with Java 17 LTS migration
 
-**JIRA-002: Mobile Framework Security Upgrade**
+2: Mobile Framework Security Upgrade
 - Upgrade Ionic from 3.9.10 to 7+ and Angular from 5.0.1 to 17+
 
-**JIRA-003: Database Security Hardening**
+3: Database Security Hardening
 - Upgrade MySQL to PostgreSQL 15+ with encryption at rest and in transit
 
-**JIRA-004: Authentication Security Overhaul**
+4: Authentication Security Overhaul
 - Replace Apache Shiro 1.4.0-RC2 with Spring Security 6+ and OAuth2/JWT
 
-**JIRA-005: API Security Implementation**
+5: API Security Implementation
 - Implement proper CORS, rate limiting, and input validation
 
-**JIRA-006: Dependency Vulnerability Remediation**
+6: Dependency Vulnerability Remediation
 - Update all dependencies to latest secure versions and implement Snyk scanning
 
 #### **Priority 2: Testing Framework Implementation**
 
-**JIRA-007: Backend Unit Testing Setup**
+7: Backend Unit Testing Setup
 - Implement JUnit 5, Mockito, and Testcontainers for comprehensive unit testing
 
-**JIRA-008: Mobile Unit Testing Setup**
+8: Mobile Unit Testing Setup
 - Implement Jasmine, Karma, and Angular Testing Utilities
 
-**JIRA-009: Integration Testing Framework**
+9: Integration Testing Framework
 - Set up Spring Boot Test with database integration testing
 
-**JIRA-010: Security Testing Implementation**
+10: Security Testing Implementation
 - Implement OWASP ZAP security scanning and penetration testing
 
-**JIRA-011: Performance Testing Setup**
+11: Performance Testing Setup
 - Implement JMeter and Gatling for load and stress testing
 
-**JIRA-012: CI/CD Pipeline Foundation**
+12: CI/CD Pipeline Foundation
 - Set up GitHub Actions with automated testing and quality gates
 
 ### 11.2 Q2 2024: Core Architecture Modernization (Months 4-6)
 
 #### **Priority 1: Microservices Architecture Implementation**
 
-**JIRA-013: Authentication Service Extraction**
-- Extract authentication logic into dedicated microservice
+13: Authentication Module Extraction
+ - Extract authentication logic into a dedicated backend module (within modular app)
 
-**JIRA-014: Citizen Service Extraction**
-- Extract citizen management into dedicated microservice with PostgreSQL
+14: Citizen Module Extraction
+ - Extract citizen management into a dedicated backend module with PostgreSQL
 
-**JIRA-015: User Management Service**
-- Create dedicated user management service with role-based access control
+15: User Management Module
+ - Create a dedicated user management module with role-based access control
 
-**JIRA-016: Complaint Service Extraction**
-- Extract complaint management into dedicated microservice
+16: Complaint Module Extraction
+ - Extract complaint management into a dedicated backend module
 
-**JIRA-017: Survey Service Extraction**
-- Extract survey functionality into dedicated microservice
+17: Survey Module Extraction
+ - Extract survey functionality into a dedicated backend module
 
-**JIRA-018: Notification Service Implementation**
-- Create notification service with FCM, email, and SMS integration
+18: Notification Module Implementation
+ - Implement notification module (FCM, email, SMS integration)
 
 #### **Priority 2: Database Migration & Optimization**
 
-**JIRA-019: Database Migration Strategy**
+19: Database Migration Strategy
 - Migrate from MySQL to PostgreSQL with data consistency patterns
 
-**JIRA-020: Caching Layer Implementation**
+20: Caching Layer Implementation
 - Implement Redis for distributed caching and session management
 
-**JIRA-021: Database Performance Optimization**
+21: Database Performance Optimization
 - Implement connection pooling, indexing, and query optimization
 
-**JIRA-022: Data Backup & Recovery**
+22: Data Backup & Recovery
 - Implement automated backup and disaster recovery procedures
 
 ### 11.3 Q3 2024: Advanced Services & Infrastructure (Months 7-9)
 
 #### **Priority 1: Business Services Extraction**
 
-**JIRA-023: File Service Implementation**
-- Create file upload and storage service with CDN integration
+23: File Module Implementation
+ - Create file upload and storage module with CDN integration
 
-**JIRA-024: Report Service Implementation**
-- Create analytics and reporting service with real-time dashboards
+24: Report Module Implementation
+ - Create analytics and reporting module with real-time dashboards
 
-**JIRA-025: Audit Service Implementation**
-- Implement comprehensive audit logging and compliance tracking
+25: Audit Module Implementation
+ - Implement comprehensive audit logging and compliance tracking
 
-**JIRA-026: Master Data Service Implementation**
-- Create master data management service for geographic and political data
+26: Master Data Module Implementation
+ - Create master data management module for geographic and political data
 
-**JIRA-027: API Documentation & Testing**
+27: API Documentation & Testing
 - Implement comprehensive API documentation with Swagger UI
 
-**JIRA-028: Performance Optimization**
+28: Performance Optimization
 - Implement caching, connection pooling, and query optimization
 
 #### **Priority 2: Infrastructure & Monitoring**
 
-**JIRA-029: Container Orchestration Setup**
+29: Container Orchestration Setup
 - Implement Docker Compose for development and Kubernetes for production
 
-**JIRA-030: Basic Monitoring Implementation**
+30: Basic Monitoring Implementation
 - Deploy Spring Boot Actuator with basic health checks and metrics
 
-**JIRA-031: Logging Infrastructure**
+31: Logging Infrastructure
 - Implement structured logging with Logback and centralized log collection
 
-**JIRA-032: Security Monitoring**
+32: Security Monitoring
 - Implement basic security monitoring with audit logging
 
-**JIRA-033: Performance Monitoring**
+33: Performance Monitoring
 - Set up basic application performance monitoring
 
-**JIRA-034: Backup & Recovery Implementation**
+34: Backup & Recovery Implementation
 - Implement automated backup and disaster recovery procedures
 
 ### 11.4 Q4 2024: Mobile Modernization & Final Integration (Months 10-12)
 
 #### **Priority 1: Mobile Application Modernization**
 
-**JIRA-035: State Management Implementation**
+35: State Management Implementation
 - Implement NgRx for centralized state management in mobile app
 
-**JIRA-036: Offline-First Architecture**
+36: Offline-First Architecture
 - Implement smart sync with conflict resolution and offline capabilities
 
-**JIRA-037: Mobile Service Refactoring**
+37: Mobile Service Refactoring
 - Refactor mobile services to use modern HTTP client and error handling
 
-**JIRA-038: Progressive Web App Features**
+38: Progressive Web App Features
 - Implement PWA features with service workers and offline support
 
-**JIRA-039: Mobile UI/UX Modernization**
+39: Mobile UI/UX Modernization
 - Implement modern design system with accessibility features
 
-**JIRA-040: Mobile Performance Optimization**
+40: Mobile Performance Optimization
 - Optimize mobile app performance with lazy loading and caching
 
 #### **Priority 2: Final Integration & Testing**
 
-**JIRA-041: End-to-End Testing Implementation**
+41: End-to-End Testing Implementation
 - Implement comprehensive E2E testing with Cypress and Detox
 
-**JIRA-042: Load Testing & Performance Validation**
+42: Load Testing & Performance Validation
 - Conduct comprehensive load testing and performance validation
 
-**JIRA-043: Security Penetration Testing**
+43: Security Penetration Testing
 - Conduct final security assessment and penetration testing
 
-**JIRA-044: User Acceptance Testing**
+44: User Acceptance Testing
 - Conduct comprehensive UAT with stakeholders and end users
 
-**JIRA-045: Production Deployment**
+45: Production Deployment
 - Deploy modernized system to production with zero-downtime migration
 
-**JIRA-046: Documentation & Training**
+46: Documentation & Training
 - Complete technical documentation and user training materials
 
-**JIRA-047: Go-Live Support**
+47: Go-Live Support
 - Provide 24/7 support during go-live and initial production period
 
-**JIRA-048: Post-Implementation Review**
+48: Post-Implementation Review
 - Conduct post-implementation review and lessons learned documentation
 
 ## 12. Resource Requirements & Quarterly Allocation
