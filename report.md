@@ -162,67 +162,183 @@ To-Be (lean modular)
                                           ↘ [ Object Storage ]
 ```
 
-### 8.1 Data Flow Highlights (key paths)
-- Auth: OTP → JWT → session cache; minimal round-trips
-- Search: indexed queries + pagination; consistent contracts across clients
-- Files: direct-to-storage streams where possible; signed URLs for downloads
-- Sync: mobile offline queue with conflict resolution rules
+# SmartiWard/SmartiElection Dependencies Analysis Report
 
-## 9. Why choose this plan (business case)
+## Overview
+This document provides a comprehensive analysis of all dependencies used in the SmartiWard/SmartiElection project, including their current versions, latest available versions, usage in the codebase, and security considerations.
 
-- Fastest path to risk reduction: fix security and performance in Q1/Q2
-- Lean by design: avoids costly gateways/meshes/streams until justified by load
-- Clear, testable KPIs: measurable improvements across latency, reliability, and quality
-- Backward compatible: API parity maintained; phased rollout avoids downtime
-- Team-fit: feasible for 2 devs + 1 tester; predictable delivery with quarterly demos
+## Project Information
+- **Project Name**: SmartiWard/SmartiElection Backend
+- **Framework**: Spring Boot 2.0.3
+- **Java Version**: 1.8
+- **Build Tool**: Maven
+- **Analysis Date**: December 2024
 
-### 9.1 Risk Register & Mitigations
-- Data migration issues → rehearsal runs, checksums, fallback snapshots
-- Performance regressions → baseline perf tests; canary releases
-- User disruption → feature flags, phased switch, training materials
-- Scope creep → change control; prioritize Q1/Q2 risk reduction
+## Dependencies Analysis
 
-### 9.2 Objections We Anticipate (and our responses)
-- “Why not add a gateway/mesh now?” → Current load doesn’t justify added ops cost; revisit when scale demands
-- “Can we skip tests to go faster?” → Tests protect small team velocity; saves time after month 2
-- “Why PostgreSQL?” → Better reliability features, JSONB, indexing options; mature migration tooling
+### Core Framework Dependencies
 
-## 10. Next Steps
+| Dependency                    | Current Version | Latest Version | Usage in Code                                                                 | Security Status              | Priority |
+|-------------------------------|-----------------|----------------|-------------------------------------------------------------------------------|------------------------------|----------|
+| **Spring Boot Starter Parent** | 2.0.3.RELEASE   | 3.2.0          | Main framework providing auto-configuration, embedded server, and dependency management | ⚠️ **CRITICAL** - End of Life | **HIGH** |
+| **Spring Boot Starter Web**    | 2.0.3.RELEASE   | 3.2.0          | REST API controllers, web MVC, embedded Tomcat server                        | ⚠️ **CRITICAL** - End of Life | **HIGH** |
+| **Spring Boot Starter Data JPA** | 2.0.3.RELEASE | 3.2.0          | Database operations, JPA repositories, Hibernate integration                 | ⚠️ **CRITICAL** - End of Life | **HIGH** |
+| **Spring Boot Starter FreeMarker** | 2.0.3.RELEASE | 3.2.0          | Template engine for generating HTML reports and web pages                    | ⚠️ **CRITICAL** - End of Life | **HIGH** |
+| **Spring Boot DevTools**       | 2.0.3.RELEASE   | 3.2.0          | Development-time auto-restart, live reload functionality                     | ⚠️ **CRITICAL** - End of Life | **MEDIUM** |
+| **Spring WS Core**             | 2.0.3.RELEASE   | 4.0.10         | Web services support for SOAP endpoints                                      | ⚠️ **CRITICAL** - End of Life | **MEDIUM** |
 
-- Approve Q1 scope (security, upgrades, CI/CD, DB hardening)
-- Schedule stakeholder demo cadence (end of each quarter)
-- Provide staging credentials for integration testing
-- Confirm data retention and backup RPO/RTO requirements
+### Database & Persistence
 
----
-Prepared for: Customer Review
-Owner: SmartNeta Modernization Team
-Date: YYYY-MM-DD
+| Dependency              | Current Version | Latest Version | Usage in Code                    | Security Status    | Priority |
+|-------------------------|-----------------|----------------|----------------------------------|--------------------|----------|
+| **MySQL Connector Java** | 8.0.33          | 8.2.0          | Database connectivity to MySQL server | ✅ **SECURE** | **MEDIUM** |
+| **Hibernate EhCache**    | 5.2.17.Final    | 5.6.15.Final   | Second-level caching for JPA entities | ⚠️ **OUTDATED** | **MEDIUM** |
+| **EhCache Core**         | 2.6.9           | 2.10.9.2       | In-memory caching framework      | ⚠️ **OUTDATED** | **MEDIUM** |
 
-## Appendix A: Performance Findings Deep-Dive
+### Security Framework
 
-Indicative (pre-optimization) p95 timings under moderate load:
-- Auth (OTP request/verify): 600–900ms occasional timeouts
-- Citizen search (name + AC + booth): 3–6s; timeouts on peak
-- Dashboard (ward/booth aggregation): 4–8s; CPU spikes; GC churn
-- Complaint submit with 2MB image: 2–5s; occasional 500
-- Notification list (1000+ rows): 1.5–3s due to N+1
+| Dependency                | Current Version | Latest Version | Usage in Code                                    | Security Status    | Priority |
+|---------------------------|-----------------|----------------|--------------------------------------------------|--------------------|----------|
+| **Apache Shiro Core**     | 1.4.0-RC2       | 1.13.0         | Authentication and authorization framework       | ⚠️ **OUTDATED** | **HIGH** |
+| **Apache Shiro Web**      | 1.4.0-RC2       | 1.13.0         | Web-specific security filters and session management | ⚠️ **OUTDATED** | **HIGH** |
+| **Apache Shiro EhCache**  | 1.4.0-RC2       | 1.13.0         | Caching for Shiro security data                  | ⚠️ **OUTDATED** | **MEDIUM** |
+| **Apache Shiro Spring**   | 1.4.0-RC2       | 1.13.0         | Spring integration for Shiro security            | ⚠️ **OUTDATED** | **HIGH** |
+| **Shiro FreeMarker Tags** | 1.0.0           | 1.0.0          | FreeMarker tags for Shiro security in templates | ✅ **CURRENT** | **LOW** |
+| **Java JWT (Auth0)**      | 3.4.0           | 4.4.0          | JWT token generation and validation              | ⚠️ **OUTDATED** | **HIGH** |
 
-Target post-optimization p95:
-- Auth: <1s; Search: <500ms; Dashboard: <800ms; File upload: <2s; Notifications: <500ms
+### Document Processing & Reporting
 
-## Appendix B: Scope, Assumptions, Out-of-Scope
-- Scope: API parity, security hardening, performance, lean observability, mobile modernization
-- Assumptions: Access to staging infra and domains; timely SME inputs; CSV formats stable
-- Out-of-scope (phase 1): API gateway/mesh, Kafka/eventing, real-time websockets, advanced ML analytics
+| Dependency                           | Current Version | Latest Version | Usage in Code                                    | Security Status                        | Priority |
+|--------------------------------------|-----------------|----------------|--------------------------------------------------|----------------------------------------|----------|
+| **Apache POI**                       | 3.15            | 5.2.4          | Excel file generation and processing             | ⚠️ **CRITICAL** - Security vulnerabilities | **HIGH** |
+| **Apache POI OOXML**                 | 3.15            | 5.2.4          | Office Open XML format support (Excel 2007+)    | ⚠️ **CRITICAL** - Security vulnerabilities | **HIGH** |
+| **iText PDF**                        | 5.5.13          | 8.0.2          | PDF document generation from HTML templates      | ⚠️ **CRITICAL** - Security vulnerabilities | **HIGH** |
+| **iText XMLWorker**                  | 5.5.13          | 5.5.13.3       | HTML to PDF conversion utilities                 | ⚠️ **CRITICAL** - Security vulnerabilities | **HIGH** |
+| **XDocReport**                       | 2.0.1           | 2.0.2          | Document generation with templates               | ✅ **SECURE** | **MEDIUM** |
+| **XDocReport Document DOCX**         | 2.0.1           | 2.0.2          | DOCX document processing                         | ✅ **SECURE** | **MEDIUM** |
+| **XDocReport Template FreeMarker**   | 2.0.1           | 2.0.2          | FreeMarker template integration                  | ✅ **SECURE** | **MEDIUM** |
+| **XDocReport Template Velocity**     | 2.0.1           | 2.0.2          | Velocity template integration                    | ✅ **SECURE** | **LOW** |
+| **XDocReport Converter DOCX**        | 2.0.1           | 2.0.2          | Document format conversion                       | ✅ **SECURE** | **MEDIUM** |
+| **XDocReport Converter ODT**         | 2.0.1           | 2.0.2          | OpenDocument format support                      | ✅ **SECURE** | **LOW** |
 
-## Appendix C: Testing & Quality Plan (summary)
-- Backend: unit/integration with Testcontainers; contract tests from OpenAPI
-- Mobile: unit + E2E (Cypress/Detox); critical path coverage ≥70%
-- Performance: Gatling/JMeter baselines per key flow pre/post
-- Security: OWASP ZAP scans; Snyk; quarterly pen test
+### Template Engine
 
-## Appendix D: Engagement Model & SLA
-- Cadence: weekly status, monthly steering, quarterly demos
-- SLA targets (post go-live): Availability 99.5%, P1 response 30m, P1 resolve 4h
-- Handover: runbooks, dashboards, rollback procedures
+| Dependency    | Current Version | Latest Version | Usage in Code                              | Security Status    | Priority |
+|---------------|-----------------|----------------|--------------------------------------------|--------------------|----------|
+| **FreeMarker** | 2.3.23          | 2.3.32         | Template engine for HTML/PDF report generation | ⚠️ **OUTDATED** | **MEDIUM** |
+
+### Cloud & External Services
+
+| Dependency        | Current Version | Latest Version | Usage in Code                    | Security Status    | Priority |
+|-------------------|-----------------|----------------|----------------------------------|--------------------|----------|
+| **AWS Java SDK S3** | 1.12.14         | 1.12.565       | Amazon S3 file storage integration | ⚠️ **OUTDATED** | **MEDIUM** |
+
+### HTTP & Communication
+
+| Dependency          | Current Version | Latest Version | Usage in Code                    | Security Status    | Priority |
+|---------------------|-----------------|----------------|----------------------------------|--------------------|----------|
+| **Apache HttpClient** | 4.5.4           | 4.5.14         | HTTP client for external API calls | ⚠️ **OUTDATED** | **MEDIUM** |
+| **Unirest Java**     | 1.4.9           | 3.14.2         | Simplified HTTP client library   | ⚠️ **OUTDATED** | **LOW** |
+
+### Data Processing
+
+| Dependency    | Current Version | Latest Version | Usage in Code                    | Security Status    | Priority |
+|---------------|-----------------|----------------|----------------------------------|--------------------|----------|
+| **OpenCSV**    | 4.0             | 5.9            | CSV file reading and writing     | ⚠️ **OUTDATED** | **MEDIUM** |
+| **Groovy All** | 2.5.6           | 4.0.15         | Dynamic scripting and data processing | ⚠️ **OUTDATED** | **LOW** |
+
+### Email & Notifications
+
+| Dependency           | Current Version | Latest Version | Usage in Code                    | Security Status    | Priority |
+|----------------------|-----------------|----------------|----------------------------------|--------------------|----------|
+| **JavaMail**         | 1.4.7           | 1.6.2          | Email sending functionality      | ⚠️ **OUTDATED** | **MEDIUM** |
+| **APNS (Apple Push)** | 0.2.3           | 1.0.0.Beta6    | iOS push notification support    | ⚠️ **OUTDATED** | **LOW** |
+
+### Reactive Programming
+
+| Dependency      | Current Version | Latest Version | Usage in Code                    | Security Status                        | Priority |
+|-----------------|-----------------|----------------|----------------------------------|----------------------------------------|----------|
+| **Reactor Core** | 2.0.8.RELEASE   | 3.6.1          | Reactive programming foundation  | ⚠️ **CRITICAL** - Major version behind | **MEDIUM** |
+| **Reactor Bus**  | 2.0.8.RELEASE   | 3.6.1          | Event bus for reactive communication | ⚠️ **CRITICAL** - Major version behind | **MEDIUM** |
+
+### API Documentation
+
+| Dependency              | Current Version | Latest Version | Usage in Code                    | Security Status                        | Priority |
+|-------------------------|-----------------|----------------|----------------------------------|----------------------------------------|----------|
+| **Springfox Swagger2**  | 2.7.0           | 3.0.0          | API documentation generation     | ⚠️ **CRITICAL** - Incompatible with Spring Boot 3.x | **HIGH** |
+| **Springfox Swagger UI** | 2.7.0           | 3.0.0          | Swagger UI for API testing       | ⚠️ **CRITICAL** - Incompatible with Spring Boot 3.x | **HIGH** |
+
+### Logging
+
+| Dependency   | Current Version | Latest Version | Usage in Code        | Security Status    | Priority |
+|--------------|-----------------|----------------|----------------------|--------------------|----------|
+| **Log4j API** | 2.10.0          | 2.21.1         | Logging framework API | ⚠️ **OUTDATED** | **MEDIUM** |
+
+## Usage Analysis by Category
+
+### 1. Core Framework (Spring Boot)
+**Purpose**: Provides the main application framework with auto-configuration, embedded server, and dependency injection.
+
+**Key Usage**:
+- `SamparkApplication.java`: Main Spring Boot application class with `@SpringBootApplication` annotation
+- REST controllers throughout the application
+- JPA repositories for database operations
+- FreeMarker templates for report generation
+
+**Critical Issues**:
+- Spring Boot 2.0.3 reached End of Life in 2020
+- No security updates available
+- Incompatible with modern Java versions (17+)
+
+### 2. Security (Apache Shiro)
+**Purpose**: Handles authentication, authorization, and session management.
+
+**Key Usage**:
+- `ShiroConfig.java`: Security configuration and filter chains
+- `UserRealm.java`, `AccountRealm.java`, `StatelessRealm.java`: Custom authentication realms
+- `JWTAuthenticationFilter.java`: JWT token validation
+- Security annotations and filters throughout the application
+
+**Critical Issues**:
+- Using Release Candidate version (1.4.0-RC2)
+- Missing security patches from stable releases
+- Potential vulnerabilities in authentication flow
+
+### 3. Document Processing
+**Purpose**: Generates PDF reports, Excel files, and processes various document formats.
+
+**Key Usage**:
+- `ReportService.java`: Comprehensive report generation using iText PDF and Apache POI
+- `CSVServiceGenerator.java`: CSV and PDF generation from database queries
+- FreeMarker templates for report formatting
+- XDocReport for document template processing
+
+**Critical Issues**:
+- Apache POI 3.15 has known security vulnerabilities
+- iText PDF 5.5.13 is severely outdated with security issues
+- Both libraries have critical CVE vulnerabilities
+
+### 4. Database & Caching
+**Purpose**: Data persistence and performance optimization through caching.
+
+**Key Usage**:
+- JPA entities with Hibernate annotations
+- Repository pattern for data access
+- EhCache for second-level caching
+- MySQL for data storage
+
+**Issues**:
+- Hibernate version is outdated
+- EhCache version lacks performance improvements
+
+### 5. Cloud Integration (AWS S3)
+**Purpose**: File storage and cloud-based document management.
+
+**Key Usage**:
+- `S3BucketStorageService.java`: File upload/download operations
+- `AwsS3ClientConfig.java`: AWS S3 client configuration
+- Integration with report generation for cloud storage
+
+**Issues**:
+- AWS SDK version is significantly outdated
+- Missing newer AWS features and security improvements
