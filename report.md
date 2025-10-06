@@ -275,71 +275,77 @@ This document provides a comprehensive analysis of all dependencies used in the 
 |--------------|-----------------|----------------|----------------------|--------------------|----------|
 | **Log4j API** | 2.10.0          | 2.21.1         | Logging framework API | ⚠️ **OUTDATED** | **MEDIUM** |
 
-## Usage Analysis by Category
+# SmartNeta Major Performance Red Flags (Backend + Ionic)
 
-### 1. Core Framework (Spring Boot)
-**Purpose**: Provides the main application framework with auto-configuration, embedded server, and dependency injection.
+Scope: Non-security performance issues that threaten meeting the targets (high concurrency, 10M+ citizens, low-latency SLOs).
 
-**Key Usage**:
-- `SamparkApplication.java`: Main Spring Boot application class with `@SpringBootApplication` annotation
-- REST controllers throughout the application
-- JPA repositories for database operations
-- FreeMarker templates for report generation
+## 1) Data Access & Query Scale (Backend)
+- Unbounded/broad queries on large tables
+  - Citizen search allows weak/absent filters; risks full/large scans on 10M+ rows.
+  - Dashboard aggregates computed on-the-fly across multiple joins.
+- Missing composite/covering indexes
+  - Queries on (assemblyId, wardId, boothId), voterId, and common name/dob fields lack matching indexes.
+- SELECT * and verbose payloads
+  - List endpoints fetch all columns instead of light DTO projections.
+- N+1 access patterns
+  - Citizen/detail and dashboard flows join lazily across related entities.
+- Lack of enforced pagination/limits
+  - Endpoints accept arbitrary sizes; server does not cap page size or reject unfettered queries.
 
-**Critical Issues**:
-- Spring Boot 2.0.3 reached End of Life in 2020
-- No security updates available
-- Incompatible with modern Java versions (17+)
+## 2) Caching & Computation Hotspots (Backend)
+- No short‑TTL cache for dashboard aggregates
+  - Recomputes on each request; spikes latency under load.
+- Master data retrieved per request
+  - States/AC/PC/wards/booths repeatedly fetched without shared cache.
+- No client validators for freshness
+  - Missing ETag/Last‑Modified; static/config endpoints not cached at client/CDN.
 
-### 2. Security (Apache Shiro)
-**Purpose**: Handles authentication, authorization, and session management.
+## 3) I/O & File Handling (Backend)
+- Synchronous file uploads/downloads on app node
+  - Files buffered to local filesystem; blocks request threads; causes GC/memory pressure.
+- Large responses not streamed
+  - No output streaming for big downloads/exports; increases memory footprint.
 
-**Key Usage**:
-- `ShiroConfig.java`: Security configuration and filter chains
-- `UserRealm.java`, `AccountRealm.java`, `StatelessRealm.java`: Custom authentication realms
-- `JWTAuthenticationFilter.java`: JWT token validation
-- Security annotations and filters throughout the application
+## 4) Connection/Server Runtime (Backend)
+- Untuned HikariCP/HTTP server settings
+  - Default pool sizes/timeouts; risk of saturation, long tail latencies, and resource pinning.
+- Missing slow‑query logging and per‑endpoint metrics
+  - Hard to identify/tune hotspots; no SLO enforcement in CI/ops.
 
-**Critical Issues**:
-- Using Release Candidate version (1.4.0-RC2)
-- Missing security patches from stable releases
-- Potential vulnerabilities in authentication flow
+## 5) Client Behavior & API Integration (Ionic)
+- Eager, duplicate API calls on app/home
+  - App settings/actions/news/notifications fetched on multiple pages without TTL or single‑flight.
+- Auto/bulk data fetch
+  - Historic behavior to prefetch citizen data; search sometimes triggers without strict filters.
+- No client‑side debounce/backoff
+  - Rapid repeated requests; no jittered retries; ignores 429 signals.
+- Master data re-fetched frequently
+  - Missing local TTL/versioning; re-requests states/AC/PC/wards/booths across pages.
 
-### 3. Document Processing
-**Purpose**: Generates PDF reports, Excel files, and processes various document formats.
+## 6) Payload Discipline (Both)
+- Over‑verbose list payloads
+  - Heavy nested objects and attachments included in lists; increases bandwidth/latency.
+- Lack of server‑side response shaping
+  - No standard DTOs for lists vs detail; inconsistent pagination contracts.
 
-**Key Usage**:
-- `ReportService.java`: Comprehensive report generation using iText PDF and Apache POI
-- `CSVServiceGenerator.java`: CSV and PDF generation from database queries
-- FreeMarker templates for report formatting
-- XDocReport for document template processing
+## 7) Impact vs Performance‑Reqs Targets
+- p95 latency at scale jeopardized by:
+  - Broad scans (citizen search), un‑cached dashboard aggregates, N+1 joins.
+- Concurrency limits threatened by:
+  - Untuned pools/timeouts; synchronous file IO; heavy responses.
+- Data volume (10M+) risks:
+  - Missing composite/covering indexes; unfettered queries; lack of enforced limits.
 
-**Critical Issues**:
-- Apache POI 3.15 has known security vulnerabilities
-- iText PDF 5.5.13 is severely outdated with security issues
-- Both libraries have critical CVE vulnerabilities
-
-### 4. Database & Caching
-**Purpose**: Data persistence and performance optimization through caching.
-
-**Key Usage**:
-- JPA entities with Hibernate annotations
-- Repository pattern for data access
-- EhCache for second-level caching
-- MySQL for data storage
-
-**Issues**:
-- Hibernate version is outdated
-- EhCache version lacks performance improvements
-
-### 5. Cloud Integration (AWS S3)
-**Purpose**: File storage and cloud-based document management.
-
-**Key Usage**:
-- `S3BucketStorageService.java`: File upload/download operations
-- `AwsS3ClientConfig.java`: AWS S3 client configuration
-- Integration with report generation for cloud storage
-
-**Issues**:
-- AWS SDK version is significantly outdated
-- Missing newer AWS features and security improvements
+## 8) High‑Leverage Fixes (Non‑security; minimal change footprint)
+- Enforce server‑side guardrails
+  - Mandatory filters (assemblyId/wardId/boothId) for citizen search; hard max page size; reject broad queries.
+- Index & query optimization
+  - Add indexes for (assemblyId, wardId, boothId), voterId, name/dob; convert hot endpoints to projections; remove SELECT *.
+- Short‑TTL caches
+  - Cache dashboard aggregates (60–120s); cache master data in app with Redis fallback.
+- Stream & offload file IO
+  - Stream uploads/downloads; move binaries to object storage (or dedicated file server) and out of the app process.
+- Client request shaping
+  - TTL + single‑flight for settings/actions; debounce user search; centralized notifications/news with TTL; eliminate auto/bulk fetch.
+- Observability & tuning
+  - Enable slow‑query log; add per‑endpoint p50/p95 dashboards; tune Hikari/HTTP timeouts and pool sizes; add load tests to CI.
