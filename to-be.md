@@ -646,12 +646,6 @@ The to-be architecture transforms SmartNeta from a monolithic, legacy system int
 - **Log Aggregation**: Fluentd for log collection
 - **Log Analysis**: Kibana dashboards and alerts
 
-#### Distributed Tracing
-- **Tracing**: Jaeger for distributed request tracing
-- **Correlation**: Trace IDs across all services
-- **Performance Analysis**: Request flow analysis
-- **Error Tracking**: Error correlation and debugging
-
 ### 7.2 Alerting & Incident Response
 
 #### Alert Configuration
