@@ -1,3 +1,1133 @@
+# Minimal Critical Path to Scale Existing SmartNeta Apps
+
+**Objective:** Support 2750 voter data downloads/second with 600K mobile users using existing tech stack (Spring Boot 2.0.3, Ionic 3.9.10, MySQL 8.0.32) without library upgrades.
+
+**Constraints:**
+- No library/framework version upgrades
+- Use Docker + Kubernetes for deployment
+- Can add Redis, read replicas, and reporting DB
+- Minimal code changes, maximum infrastructure leverage
+
+---
+
+## Executive Summary
+
+Current bottleneck: `/open/volunteer/citizens` endpoint performs unbounded SELECT on 10M+ citizen rows with minimal filters, returns full dataset as JSON, and runs on a single app instance with untuned connection pools.
+
+**Critical Path (8 weeks):**
+1. **Database layer:** Add indexes, create read replicas, offload reporting (2 weeks)
+2. **Caching layer:** Redis for citizen data, master data, dashboard aggregates (2 weeks)
+3. **Backend tuning:** HikariCP, Tomcat threads, query optimization, pagination enforcement (2 weeks)
+4. **Containerization & K8s:** Dockerize, horizontal pod autoscaling, load balancing (2 weeks)
+
+**Expected outcome:** 2750 req/s sustained, p95 < 500ms, zero downtime deployments.
+
+---
+
+## 1. Current Architecture & Bottlenecks
+
+### 1.1 Data Flow (Voter Download)
+
+```
+Mobile App (600K users)
+    ↓ (on sync/refresh)
+POST /open/volunteer/citizens
+    {state, assemblyNo, wardNo, date, boothNos, updatedCitizens[]}
+    ↓
+VolunteerController.citizens()
+    → Raw SQL: SELECT * FROM citizen WHERE state=? AND assembly_no=? [AND ward_no=?] [AND modifieddate > ?]
+    → No pagination, no LIMIT
+    → Returns full result set as JSON (10MB avg per volunteer)
+    ↓
+Mobile App stores in SQLite
+```
+
+### 1.2 Critical Bottlenecks
+
+| Layer | Issue | Impact at 2750 req/s |
+|-------|-------|---------------------|
+| **Database** | Missing composite indexes on (state, assembly_no, ward_no, booth_no, modifieddate) | Full table scans; p95 > 5s |
+| **Database** | Single MySQL instance; all reads/writes hit primary | Connection pool saturation; query queuing |
+| **Backend** | HikariCP: max-pool-size=50, idle-timeout=600s | 2750 req/s × 0.5s avg = 1375 concurrent connections needed; pool exhausted |
+| **Backend** | Tomcat: default 200 threads | Thread starvation; 503 errors |
+| **Backend** | No caching; every request hits DB | Repeated queries for same data (master data, recent citizens) |
+| **Backend** | Unbounded queries; no enforced pagination | 10MB+ responses; heap pressure; GC pauses |
+| **Mobile** | Eager sync on app start; no TTL | Thundering herd on election day mornings |
+| **Deployment** | Single JAR on single VM | No horizontal scaling; single point of failure |
+
+---
+
+## 2. Minimal Critical Path (8 Weeks)
+
+### Phase 1: Database Layer (Week 1-2)
+
+#### 2.1.1 Add Composite Indexes (Day 1)
+
+```sql
+-- Primary voter download query optimization
+CREATE INDEX idx_citizen_download ON citizen(state, assembly_no, ward_no, modifieddate);
+CREATE INDEX idx_citizen_booth ON citizen(state, assembly_no, booth_no, modifieddate);
+
+-- Search queries
+CREATE INDEX idx_citizen_voter_id ON citizen(voter_id);
+CREATE INDEX idx_citizen_mobile ON citizen(mobile);
+CREATE INDEX idx_citizen_srno ON citizen(srno);
+
+-- Dashboard aggregates
+CREATE INDEX idx_citizen_status ON citizen(state, assembly_no, ward_no, booth_no, responded_status);
+CREATE INDEX idx_citizen_voted ON citizen(state, assembly_no, ward_no, booth_no, voted);
+
+-- Analyze tables
+ANALYZE TABLE citizen;
+ANALYZE TABLE booth;
+ANALYZE TABLE ward;
+ANALYZE TABLE assembly_constituency;
+```
+
+**Expected gain:** Query time 5s → 200ms (25× faster).
+
+#### 2.1.2 MySQL Read Replicas (Day 2-3)
+
+**Architecture:**
+```
+Primary MySQL (writes)
+    ↓ (async replication)
+Read Replica 1 (reads)
+Read Replica 2 (reads)
+```
+
+**Spring Boot Configuration:**
+
+```properties
+# application.properties (add)
+spring.datasource.primary.url=jdbc:mysql://mysql-primary:3306/sampark?...
+spring.datasource.primary.username=root
+spring.datasource.primary.password=mypass
+
+spring.datasource.replica1.url=jdbc:mysql://mysql-replica-1:3306/sampark?...
+spring.datasource.replica1.username=readonly
+spring.datasource.replica1.password=readonly
+
+spring.datasource.replica2.url=jdbc:mysql://mysql-replica-2:3306/sampark?...
+spring.datasource.replica2.username=readonly
+spring.datasource.replica2.password=readonly
+```
+
+**Code Changes (minimal):**
+
+Create `DataSourceConfig.java`:
+
+```java
+@Configuration
+public class DataSourceConfig {
+    
+    @Bean(name = "primaryDataSource")
+    @Primary
+    @ConfigurationProperties(prefix = "spring.datasource.primary")
+    public DataSource primaryDataSource() {
+        return DataSourceBuilder.create().build();
+    }
+    
+    @Bean(name = "replicaDataSource")
+    @ConfigurationProperties(prefix = "spring.datasource.replica1")
+    public DataSource replicaDataSource() {
+        // Simple round-robin between replicas can be added here
+        return DataSourceBuilder.create().build();
+    }
+    
+    @Bean(name = "primaryJdbcTemplate")
+    public JdbcTemplate primaryJdbcTemplate(@Qualifier("primaryDataSource") DataSource ds) {
+        return new JdbcTemplate(ds);
+    }
+    
+    @Bean(name = "replicaJdbcTemplate")
+    public JdbcTemplate replicaJdbcTemplate(@Qualifier("replicaDataSource") DataSource ds) {
+        return new JdbcTemplate(ds);
+    }
+}
+```
+
+**Modify VolunteerController.citizens():**
+
+```java
+@Autowired
+@Qualifier("replicaJdbcTemplate")
+private JdbcTemplate replicaJdbcTemplate;
+
+@RequestMapping(value = "/volunteer/citizens", method = RequestMethod.GET)
+@ResponseBody
+public List<Map<String, Object>> citizens(HttpServletRequest request) {
+    // Use replicaJdbcTemplate instead of em.createNativeQuery()
+    String sql = buildCitizenQuery(request);
+    return replicaJdbcTemplate.query(sql, new CitizenRowMapper());
+}
+```
+
+**Expected gain:** 3× read throughput (distribute load across 3 DB instances).
+
+#### 2.1.3 Reporting Database (Day 4-5)
+
+**Purpose:** Offload dashboard aggregates, analytics, CSV exports to separate DB.
+
+**Setup:**
+- Create `sampark_reporting` database
+- Replicate citizen, booth, ward, assembly_constituency tables via MySQL replication or scheduled ETL
+- Point dashboard/report queries to reporting DB
+
+**Expected gain:** Isolate heavy analytical queries from transactional load.
+
+---
+
+### Phase 2: Caching Layer (Week 3-4)
+
+#### 2.2.1 Redis Setup (Day 1)
+
+**Docker Compose (dev):**
+
+```yaml
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 2gb --maxmemory-policy allkeys-lru
+```
+
+**Spring Boot Configuration:**
+
+```properties
+# application.properties (add)
+spring.redis.host=redis
+spring.redis.port=6379
+spring.redis.timeout=2000ms
+spring.cache.type=redis
+spring.cache.redis.time-to-live=300000
+```
+
+**Add dependency (pom.xml):**
+
+```xml
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-data-redis</artifactId>
+</dependency>
+```
+
+#### 2.2.2 Cache Citizen Data (Day 2-4)
+
+**Strategy:** Cache citizen data by (state, assemblyNo, wardNo, boothNos, modifiedDate).
+
+**Code Changes:**
+
+Enable caching in `Application.java`:
+
+```java
+@SpringBootApplication
+@EnableCaching
+public class Application {
+    public static void main(String[] args) {
+        SpringApplication.run(Application.class, args);
+    }
+}
+```
+
+**Modify VolunteerController.citizens():**
+
+```java
+@Cacheable(value = "citizens", key = "#state + '_' + #assemblyNo + '_' + #wardNo + '_' + #boothNos + '_' + #date")
+@RequestMapping(value = "/volunteer/citizens", method = RequestMethod.GET)
+@ResponseBody
+public List<Map<String, Object>> citizens(
+    @RequestParam String state,
+    @RequestParam String assemblyNo,
+    @RequestParam String wardNo,
+    @RequestParam String date,
+    @RequestParam String boothNos) {
+    // existing logic
+}
+```
+
+**TTL:** 5 minutes (300s) for citizen data; 1 hour for master data.
+
+**Cache Invalidation:** On citizen update (POST /volunteer/citizens), evict cache:
+
+```java
+@CacheEvict(value = "citizens", key = "#state + '_' + #assemblyNo + '_' + #wardNo + '_' + #boothNos + '_' + #date")
+@RequestMapping(value = "/volunteer/citizens", method = RequestMethod.POST)
+@ResponseBody
+public List<Map<String, Object>> uploadCitizen(...) {
+    // existing logic
+}
+```
+
+**Expected gain:** 80% cache hit rate → 80% of requests served from Redis (< 10ms) instead of DB (200ms).
+
+#### 2.2.3 Cache Master Data (Day 5)
+
+**Endpoints to cache:**
+- `/volunteer/states` → TTL: 1 day
+- `/volunteer/assemblyConstituencys/{stateId}` → TTL: 1 day
+- `/volunteer/wardsAndBooths/{assemblyConstituencyId}` → TTL: 1 day
+- `/volunteer/applicationSettings` → TTL: 1 hour
+- `/volunteer/parties` → TTL: 1 day
+
+**Code:**
+
+```java
+@Cacheable(value = "states", key = "'all'")
+@RequestMapping(value = "/volunteer/states", method = RequestMethod.GET)
+@ResponseBody
+public HashMap<String, Object> states(...) {
+    // existing logic
+}
+
+@Cacheable(value = "assemblyConstituencys", key = "#stateId")
+@RequestMapping(value = "/volunteer/assemblyConstituencys/{stateId}", method = RequestMethod.GET)
+@ResponseBody
+public HashMap<String, Object> assemblyConstituencys(@PathVariable Long stateId) {
+    // existing logic
+}
+```
+
+**Expected gain:** Eliminate 50% of DB queries (master data requests).
+
+#### 2.2.4 Cache Dashboard Aggregates (Day 6-7)
+
+**Problem:** Dashboard queries aggregate across 10M+ rows on every request.
+
+**Solution:** Cache aggregates for (state, assemblyNo, wardNo, boothNo) with 2-minute TTL.
+
+**Code:**
+
+```java
+@Cacheable(value = "dashboardStats", key = "#state + '_' + #assemblyNo + '_' + #wardNo + '_' + #boothNo")
+public Map<String, Object> getDashboardStats(String state, String assemblyNo, String wardNo, String boothNo) {
+    // existing aggregation logic
+}
+```
+
+**Expected gain:** Dashboard load time 3s → 50ms.
+
+---
+
+### Phase 3: Backend Tuning (Week 5-6)
+
+#### 2.3.1 HikariCP Tuning (Day 1)
+
+**Current config (application.properties):**
+```properties
+spring.datasource.hikari.maximum-pool-size=50
+spring.datasource.hikari.minimum-idle=20
+```
+
+**Problem:** 2750 req/s × 0.2s avg query time = 550 concurrent connections needed per replica.
+
+**New config:**
+
+```properties
+# Primary (writes) - conservative
+spring.datasource.primary.hikari.maximum-pool-size=100
+spring.datasource.primary.hikari.minimum-idle=50
+spring.datasource.primary.hikari.connection-timeout=5000
+spring.datasource.primary.hikari.idle-timeout=300000
+spring.datasource.primary.hikari.max-lifetime=600000
+
+# Replica (reads) - aggressive
+spring.datasource.replica.hikari.maximum-pool-size=200
+spring.datasource.replica.hikari.minimum-idle=100
+spring.datasource.replica.hikari.connection-timeout=3000
+spring.datasource.replica.hikari.idle-timeout=300000
+spring.datasource.replica.hikari.max-lifetime=600000
+```
+
+**MySQL side (my.cnf):**
+
+```ini
+max_connections = 500
+wait_timeout = 300
+interactive_timeout = 300
+```
+
+**Expected gain:** Eliminate connection pool saturation; reduce p95 latency by 50%.
+
+#### 2.3.2 Tomcat Thread Tuning (Day 2)
+
+**Current:** Default 200 threads.
+
+**New config (application.properties):**
+
+```properties
+server.tomcat.threads.max=500
+server.tomcat.threads.min-spare=100
+server.tomcat.accept-count=200
+server.tomcat.max-connections=1000
+```
+
+**Expected gain:** Handle 2750 req/s without thread starvation.
+
+#### 2.3.3 Query Optimization (Day 3-5)
+
+**Problem:** `/volunteer/citizens` returns unbounded result sets.
+
+**Solution 1: Enforce pagination**
+
+Modify `VolunteerController.citizens()`:
+
+```java
+@RequestMapping(value = "/volunteer/citizens", method = RequestMethod.GET)
+@ResponseBody
+public Map<String, Object> citizens(
+    @RequestParam String state,
+    @RequestParam String assemblyNo,
+    @RequestParam String wardNo,
+    @RequestParam String date,
+    @RequestParam String boothNos,
+    @RequestParam(defaultValue = "0") int page,
+    @RequestParam(defaultValue = "1000") int size) {
+    
+    // Enforce max page size
+    if (size > 1000) size = 1000;
+    
+    String sql = buildCitizenQuery(state, assemblyNo, wardNo, date, boothNos);
+    sql += " LIMIT " + size + " OFFSET " + (page * size);
+    
+    List<Map<String, Object>> citizens = replicaJdbcTemplate.query(sql, new CitizenRowMapper());
+    
+    // Return paginated response
+    Map<String, Object> response = new HashMap<>();
+    response.put("citizens", citizens);
+    response.put("page", page);
+    response.put("size", size);
+    response.put("hasMore", citizens.size() == size);
+    return response;
+}
+```
+
+**Mobile app changes (minimal):**
+
+Modify `IONICAPP/src/providers/localdatasync.service.ts`:
+
+```typescript
+syncCitizen() {
+    let page = 0;
+    let hasMore = true;
+    
+    const fetchPage = () => {
+        this.commonService.getCitizens(this.stateName, this.assemblyNo, this.wardNo, this.last_synch_date, -1, res, page, 1000)
+            .subscribe(res => {
+                this.myCitizenDatabase.addUser(res.citizens).then(() => {
+                    if (res.hasMore) {
+                        page++;
+                        fetchPage();
+                    } else {
+                        this.presentToast("Citizen Synced");
+                    }
+                });
+            });
+    };
+    fetchPage();
+}
+```
+
+**Expected gain:** Reduce response size 10MB → 1MB; reduce heap pressure; enable progressive loading.
+
+**Solution 2: DTO Projections**
+
+Instead of SELECT *, select only required fields:
+
+```sql
+SELECT 
+    C.id, C.voter_id, C.first_name, C.family_name, C.gender, C.age, 
+    C.mobile, C.srno, C.booth_no, C.ward_no, C.responded_status, C.voted, 
+    C.modifieddate
+FROM citizen C
+WHERE ...
+```
+
+Remove heavy fields (address, latitude, longitude, party_preference) from list endpoint; fetch on detail page.
+
+**Expected gain:** Reduce response size by 40%; reduce bandwidth and serialization time.
+
+#### 2.3.4 Enforce Mandatory Filters (Day 6)
+
+**Problem:** Mobile app can request all citizens in a state (10M+ rows).
+
+**Solution:** Reject requests without assemblyNo or wardNo.
+
+```java
+@RequestMapping(value = "/volunteer/citizens", method = RequestMethod.GET)
+@ResponseBody
+public Map<String, Object> citizens(...) {
+    if (Strings.isBlank(assemblyNo) && Strings.isBlank(wardNo)) {
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "assemblyNo or wardNo is required");
+    }
+    // existing logic
+}
+```
+
+**Expected gain:** Eliminate broad scans; enforce query discipline.
+
+#### 2.3.5 Async File Operations (Day 7)
+
+**Problem:** `/open/getVotersDataCSV` buffers entire CSV in memory; blocks request thread.
+
+**Solution:** Stream CSV directly to response.
+
+Modify `MobileController.getVotersDataCSV()`:
+
+```java
+@RequestMapping(value = "/getVotersDataCSV", method = RequestMethod.GET)
+public void getVotersDataCSV(HttpServletRequest request, HttpServletResponse response) throws IOException {
+    String id = request.getParameter("id");
+    response.setContentType("text/csv");
+    response.addHeader("content-disposition", "attachment; filename=\"voters.csv\"");
+    
+    try (OutputStream out = response.getOutputStream()) {
+        streamCitizensToCSV(id, out);
+    }
+}
+
+private void streamCitizensToCSV(String id, OutputStream out) {
+    // Stream query results directly to CSV without buffering
+    String sql = "SELECT ... FROM citizen WHERE ...";
+    replicaJdbcTemplate.query(sql, rs -> {
+        // Write CSV row directly to output stream
+        writeCsvRow(out, rs);
+    });
+}
+```
+
+**Expected gain:** Eliminate file I/O bottleneck; reduce heap usage; support concurrent downloads.
+
+---
+
+### Phase 4: Containerization & Kubernetes (Week 7-8)
+
+#### 2.4.1 Dockerize Backend (Day 1-2)
+
+**Dockerfile:**
+
+```dockerfile
+FROM openjdk:8-jre-alpine
+WORKDIR /app
+COPY target/smartielection-backend.jar app.jar
+EXPOSE 8585
+
+# JVM tuning for containers
+ENV JAVA_OPTS="-Xms2g -Xmx4g -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+UseStringDeduplication"
+
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
+```
+
+**Build:**
+
+```bash
+mvn clean package -DskipTests
+docker build -t smartneta-backend:latest .
+```
+
+#### 2.4.2 Kubernetes Deployment (Day 3-5)
+
+**k8s/deployment.yaml:**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smartneta-backend
+spec:
+  replicas: 5  # Start with 5 pods
+  selector:
+    matchLabels:
+      app: smartneta-backend
+  template:
+    metadata:
+      labels:
+        app: smartneta-backend
+    spec:
+      containers:
+      - name: backend
+        image: smartneta-backend:latest
+        ports:
+        - containerPort: 8585
+        env:
+        - name: SPRING_DATASOURCE_PRIMARY_URL
+          value: "jdbc:mysql://mysql-primary:3306/sampark?..."
+        - name: SPRING_DATASOURCE_REPLICA_URL
+          value: "jdbc:mysql://mysql-replica-1:3306/sampark?..."
+        - name: SPRING_REDIS_HOST
+          value: "redis"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8585
+          initialDelaySeconds: 60
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8585
+          initialDelaySeconds: 30
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: smartneta-backend
+spec:
+  type: LoadBalancer
+  selector:
+    app: smartneta-backend
+  ports:
+  - port: 80
+    targetPort: 8585
+```
+
+**k8s/hpa.yaml (Horizontal Pod Autoscaler):**
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: smartneta-backend-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: smartneta-backend
+  minReplicas: 5
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+```
+
+**Expected gain:** 
+- 5 pods × 500 req/s/pod = 2500 req/s baseline
+- Auto-scale to 20 pods for peak load (10,000 req/s capacity)
+- Zero-downtime rolling updates
+
+#### 2.4.3 MySQL & Redis on K8s (Day 6-7)
+
+**k8s/mysql-statefulset.yaml:**
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql-primary
+spec:
+  serviceName: mysql-primary
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql-primary
+  template:
+    metadata:
+      labels:
+        app: mysql-primary
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:8.0.32
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: password
+        ports:
+        - containerPort: 3306
+        volumeMounts:
+        - name: mysql-data
+          mountPath: /var/lib/mysql
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2000m"
+          limits:
+            memory: "8Gi"
+            cpu: "4000m"
+  volumeClaimTemplates:
+  - metadata:
+      name: mysql-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 500Gi
+```
+
+**k8s/redis-deployment.yaml:**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        command: ["redis-server", "--maxmemory", "4gb", "--maxmemory-policy", "allkeys-lru"]
+        ports:
+        - containerPort: 6379
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "1000m"
+```
+
+#### 2.4.4 Load Testing & Tuning (Day 8-10)
+
+**Load Test Script (JMeter/Gatling):**
+
+```bash
+# Simulate 2750 req/s for 10 minutes
+ab -n 1650000 -c 2750 -t 600 -p citizen_request.json -T application/json \
+   http://smartneta-backend/open/volunteer/citizens
+```
+
+**Metrics to monitor:**
+- Request rate (req/s)
+- Response time (p50, p95, p99)
+- Error rate (%)
+- CPU/memory utilization per pod
+- Database connection pool usage
+- Redis hit rate
+
+**Tuning iterations:**
+- Adjust HPA thresholds based on observed CPU/memory patterns
+- Tune HikariCP pool sizes based on connection usage
+- Adjust Redis maxmemory based on cache hit rate
+- Optimize slow queries identified in MySQL slow query log
+
+---
+
+## 3. Mobile App Changes (Minimal)
+
+### 3.1 Pagination Support (IONICAPP)
+
+Modify `src/providers/common.service.ts`:
+
+```typescript
+getCitizens(state, assemblyNo, wardNo, date, boothNo, data, page = 0, size = 1000) {
+  var headers = new Headers();
+  headers.append("Content-Type", "application/json");
+  let params = new URLSearchParams();
+  params.append("state", state);
+  params.append("assemblyNo", assemblyNo);
+  params.append("wardNo", wardNo);
+  params.append("date", date);
+  params.append("boothNos", boothNo);
+  params.append("page", page.toString());
+  params.append("size", size.toString());
+
+  let options_n = new RequestOptions({ headers: headers, params: params });
+  return this.http
+    .post(this.baseUrl + "/citizens", data, options_n)
+    .map((res: Response) => res.json());
+}
+```
+
+Modify `src/providers/localdatasync.service.ts`:
+
+```typescript
+syncCitizen() {
+  return new Promise((resolve, reject) => {
+    let page = 0;
+    const fetchPage = () => {
+      this.myCitizenDatabase.getDataToSync().then((localUpdates) => {
+        this.commonService.getCitizens(this.stateName, this.assemblyNo, this.wardNo, 
+          this.last_synch_date, -1, localUpdates, page, 1000).subscribe(res => {
+          this.myCitizenDatabase.addUser(res.citizens).then(() => {
+            if (res.hasMore) {
+              page++;
+              fetchPage();
+            } else {
+              this.presentToast("Citizen Synced");
+              resolve(true);
+            }
+          });
+        }, err => {
+          this.presentToast("Citizen Syncing failed");
+          reject(err);
+        });
+      });
+    };
+    fetchPage();
+  });
+}
+```
+
+### 3.2 Client-Side Request Shaping
+
+**Add debounce to search:**
+
+```typescript
+// src/pages/search-voters/search-voters.ts
+import { debounceTime } from 'rxjs/operators';
+
+searchControl = new FormControl();
+
+ngOnInit() {
+  this.searchControl.valueChanges
+    .pipe(debounceTime(500))
+    .subscribe(value => {
+      this.performSearch(value);
+    });
+}
+```
+
+**Add TTL to master data:**
+
+```typescript
+// src/providers/onetimecall.service.ts
+async getStates() {
+  const cached = localStorage.getItem('states');
+  const cacheTime = localStorage.getItem('states_time');
+  const now = Date.now();
+  
+  if (cached && cacheTime && (now - parseInt(cacheTime)) < 86400000) { // 24 hours
+    return JSON.parse(cached);
+  }
+  
+  const states = await this.commonService.getStates().toPromise();
+  localStorage.setItem('states', JSON.stringify(states));
+  localStorage.setItem('states_time', now.toString());
+  return states;
+}
+```
+
+---
+
+## 4. Deployment Architecture
+
+### 4.1 Production Architecture Diagram
+
+```
+                    ┌─────────────────┐
+                    │   Load Balancer │
+                    │   (K8s Ingress) │
+                    └────────┬────────┘
+                             │
+              ┌──────────────┼──────────────┐
+              │              │              │
+      ┌───────▼──────┐ ┌────▼─────┐ ┌─────▼──────┐
+      │  Backend Pod │ │ Backend  │ │  Backend   │
+      │   (replica)  │ │   Pod    │ │    Pod     │
+      └───────┬──────┘ └────┬─────┘ └─────┬──────┘
+              │              │              │
+              └──────────────┼──────────────┘
+                             │
+                    ┌────────▼────────┐
+                    │   Redis Cache   │
+                    │   (4GB memory)  │
+                    └────────┬────────┘
+                             │
+              ┌──────────────┼──────────────┐
+              │              │              │
+      ┌───────▼──────┐ ┌────▼─────┐ ┌─────▼──────┐
+      │ MySQL Primary│ │  MySQL   │ │   MySQL    │
+      │   (writes)   │ │ Replica 1│ │  Replica 2 │
+      └──────────────┘ └──────────┘ └────────────┘
+                             │
+                    ┌────────▼────────┐
+                    │  Reporting DB   │
+                    │  (analytics)    │
+                    └─────────────────┘
+```
+
+### 4.2 Resource Requirements
+
+| Component | Instances | CPU | Memory | Storage | Cost/month (AWS) |
+|-----------|-----------|-----|--------|---------|------------------|
+| Backend Pods | 5-20 (auto-scale) | 1-2 vCPU | 2-4 GB | - | $200-800 |
+| MySQL Primary | 1 | 4 vCPU | 16 GB | 500 GB SSD | $400 |
+| MySQL Replicas | 2 | 4 vCPU | 16 GB | 500 GB SSD | $800 |
+| Redis | 1 | 2 vCPU | 4 GB | - | $100 |
+| Reporting DB | 1 | 2 vCPU | 8 GB | 500 GB SSD | $250 |
+| Load Balancer | 1 | - | - | - | $50 |
+| **Total** | | | | | **$1,800-2,400/month** |
+
+**Note:** Costs are estimates for AWS EKS. Can be reduced 50% with reserved instances or on-premise deployment.
+
+---
+
+## 5. Testing & Validation
+
+### 5.1 Load Testing Plan
+
+**Week 7-8: Progressive load tests**
+
+| Test | Target RPS | Duration | Success Criteria |
+|------|-----------|----------|------------------|
+| Baseline | 500 | 10 min | p95 < 500ms, 0% errors |
+| Ramp-up | 1000 | 10 min | p95 < 500ms, < 0.1% errors |
+| Target | 2750 | 10 min | p95 < 500ms, < 0.5% errors |
+| Spike | 5000 | 2 min | p95 < 1s, < 1% errors |
+| Endurance | 2750 | 1 hour | p95 < 500ms, < 0.5% errors |
+
+**Tools:** Apache JMeter, Gatling, or k6.
+
+**Metrics Dashboard:** Grafana + Prometheus
+- Request rate, response time (p50/p95/p99)
+- Error rate, status code distribution
+- Pod CPU/memory utilization
+- Database connection pool usage, query latency
+- Redis hit rate, memory usage
+
+### 5.2 Rollback Plan
+
+**If load tests fail:**
+1. Identify bottleneck via metrics (DB, cache, backend threads)
+2. Tune specific layer (HikariCP, Tomcat, Redis maxmemory, HPA thresholds)
+3. Re-test
+4. If critical failure, rollback to previous stable version via K8s:
+   ```bash
+   kubectl rollout undo deployment/smartneta-backend
+   ```
+
+---
+
+## 6. Risk Mitigation
+
+| Risk | Probability | Impact | Mitigation |
+|------|-------------|--------|------------|
+| Database replication lag | Medium | High | Monitor lag; if > 5s, add more replicas or switch to synchronous replication for critical writes |
+| Redis memory exhaustion | Medium | Medium | Set maxmemory-policy=allkeys-lru; monitor hit rate; increase memory if hit rate < 70% |
+| Pod OOM kills | Low | High | Set memory limits 2× requests; enable JVM heap dumps; tune -Xmx |
+| Network partition (DB) | Low | Critical | Use K8s StatefulSets with persistent volumes; enable automated failover |
+| Thundering herd on election day | High | High | Pre-warm cache; implement exponential backoff in mobile app; add rate limiting (429 responses) |
+
+---
+
+## 7. Success Metrics
+
+**Performance:**
+- ✅ Sustained 2750 req/s for 1 hour
+- ✅ p95 response time < 500ms
+- ✅ p99 response time < 1s
+- ✅ Error rate < 0.5%
+
+**Scalability:**
+- ✅ Auto-scale from 5 to 20 pods based on load
+- ✅ Handle 5000 req/s spike for 2 minutes
+
+**Reliability:**
+- ✅ Zero downtime deployments
+- ✅ Database failover < 30s
+- ✅ Cache hit rate > 70%
+
+**Cost:**
+- ✅ Infrastructure cost < $2,500/month
+- ✅ 50% cost reduction vs. vertical scaling single VM
+
+---
+
+## 8. Timeline & Milestones
+
+| Week | Phase | Deliverables | Owner |
+|------|-------|--------------|-------|
+| 1-2 | Database Layer | Indexes, read replicas, reporting DB | Backend Dev + DBA |
+| 3-4 | Caching Layer | Redis setup, citizen cache, master data cache, dashboard cache | Backend Dev |
+| 5-6 | Backend Tuning | HikariCP, Tomcat, query optimization, pagination, file streaming | Backend Dev |
+| 7-8 | K8s Deployment | Dockerize, K8s manifests, HPA, load testing, tuning | DevOps + Backend Dev |
+
+**Total:** 8 weeks, 2 backend developers + 1 DevOps engineer.
+
+---
+
+## 9. Post-Launch Monitoring
+
+**Daily (first 2 weeks):**
+- Monitor Grafana dashboards for anomalies
+- Review slow query log
+- Check Redis hit rate
+- Validate HPA scaling behavior
+
+**Weekly:**
+- Review error logs for new failure patterns
+- Optimize slow queries identified in monitoring
+- Tune cache TTLs based on hit rate
+
+**Monthly:**
+- Capacity planning: project growth, adjust HPA max replicas
+- Cost optimization: analyze resource utilization, right-size pods
+- Disaster recovery drill: test DB failover, pod restarts
+
+---
+
+## 10. Future Enhancements (Post-Launch)
+
+**If additional scale needed (> 5000 req/s):**
+1. **Sharding:** Partition citizen table by state or assembly_no
+2. **CDN:** Cache static assets (images, templates) on CloudFront/Cloudflare
+3. **Read-through cache:** Implement cache-aside pattern with automatic DB fallback
+4. **Async processing:** Move heavy operations (CSV exports, bulk updates) to message queue (RabbitMQ/Kafka)
+5. **Database upgrade:** Migrate to PostgreSQL with better indexing, partitioning, and connection pooling
+
+**If library upgrades allowed:**
+- Spring Boot 3.2+ (virtual threads, improved observability)
+- Ionic 7+ (better performance, smaller bundle size)
+- MySQL 8.0.35+ (latest performance improvements)
+
+---
+
+## Appendix A: Quick Reference Commands
+
+### Build & Deploy
+
+```bash
+# Build backend
+cd smartiward_fe_be_smartielection_be
+mvn clean package -DskipTests
+
+# Build Docker image
+docker build -t smartneta-backend:latest .
+
+# Push to registry
+docker tag smartneta-backend:latest <registry>/smartneta-backend:latest
+docker push <registry>/smartneta-backend:latest
+
+# Deploy to K8s
+kubectl apply -f k8s/mysql-statefulset.yaml
+kubectl apply -f k8s/redis-deployment.yaml
+kubectl apply -f k8s/deployment.yaml
+kubectl apply -f k8s/hpa.yaml
+
+# Check status
+kubectl get pods
+kubectl get hpa
+kubectl logs -f deployment/smartneta-backend
+```
+
+### Database Operations
+
+```bash
+# Connect to MySQL primary
+kubectl exec -it mysql-primary-0 -- mysql -u root -p
+
+# Check replication status
+SHOW SLAVE STATUS\G
+
+# Add indexes
+mysql -u root -p sampark < add_indexes.sql
+
+# Analyze tables
+mysqlcheck -u root -p --analyze sampark
+```
+
+### Cache Operations
+
+```bash
+# Connect to Redis
+kubectl exec -it redis-<pod-id> -- redis-cli
+
+# Check cache hit rate
+INFO stats
+
+# Clear cache
+FLUSHALL
+
+# Monitor cache keys
+MONITOR
+```
+
+### Load Testing
+
+```bash
+# JMeter
+jmeter -n -t load_test.jmx -l results.jtl -e -o report/
+
+# k6
+k6 run --vus 2750 --duration 10m load_test.js
+
+# Apache Bench
+ab -n 165000 -c 2750 -p request.json -T application/json http://backend/open/volunteer/citizens
+```
+
+---
+
+## Appendix B: Monitoring Queries
+
+### Slow Queries (MySQL)
+
+```sql
+-- Enable slow query log
+SET GLOBAL slow_query_log = 'ON';
+SET GLOBAL long_query_time = 1;
+
+-- Check slow queries
+SELECT * FROM mysql.slow_log ORDER BY query_time DESC LIMIT 10;
+```
+
+### Connection Pool Usage (HikariCP)
+
+```sql
+-- Check active connections
+SHOW PROCESSLIST;
+
+-- Check connection count by state
+SELECT state, COUNT(*) FROM information_schema.processlist GROUP BY state;
+```
+
+### Redis Hit Rate
+
+```bash
+redis-cli INFO stats | grep keyspace
+# Look for keyspace_hits and keyspace_misses
+# Hit rate = hits / (hits + misses)
+```
+
+---
+
+## Conclusion
+
+This minimal critical path leverages infrastructure scaling (K8s, Redis, read replicas) and surgical backend tuning to achieve 2750 req/s with the existing tech stack. No major code rewrites or library upgrades required.
+
+**Key success factors:**
+1. **Database layer:** Indexes + read replicas eliminate query bottleneck
+2. **Caching layer:** Redis offloads 70-80% of DB queries
+3. **Backend tuning:** HikariCP + Tomcat tuning eliminates connection/thread saturation
+4. **Horizontal scaling:** K8s HPA provides elastic capacity for peak loads
+
+**Total effort:** 8 weeks, 3 engineers, $2,000-2,500/month infrastructure cost.
+
+**Risk:** Low. Each phase is independently testable and reversible. No breaking changes to mobile app or admin frontend.
+
+
+
+
 # JIRA Stories: Minimal Scale Path for SmartNeta
 
 **Epic:** Scale SmartNeta to Support 2750 Voter Downloads/Second
