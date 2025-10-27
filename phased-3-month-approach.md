@@ -1,6 +1,6 @@
 # SmartNeta 3-Month Phased Modernization Plan
 
-**Timeline:** 3 months (2 months development + 1 month testing/deployment)  
+**Timeline:** 4 months (2.5 months development + 1 month testing/deployment + 0.5 months for performance testing)  
 **Objective:** Fix performance issues, rewrite mobile app, upgrade backend security, dockerize and deploy to Kubernetes with database read replicas and intelligent caching
 
 ---
@@ -123,17 +123,17 @@ MOBILE APPS:
 
 ## 2. JIRA Stories for 3-Month Delivery
 
-### **EPIC: PHASE3M-001 - SmartNeta 3-Month Modernization**
+### **EPIC: PHASE3M-001 - SmartNeta 4-Month Modernization**
 
 **Epic Description:** Complete platform modernization including mobile app rewrite, backend security upgrade, dockerization, Kubernetes deployment with database read replicas and intelligent caching.
 
-**Total Effort:** 10-11 weeks (allowing 1-2 weeks buffer within 3 months)
+**Total Effort:** 15-16 weeks (allowing 1-2 weeks buffer within 4 months)
 
 ---
 
-## Month 1: Foundation & Backend Modernization (Weeks 1-4)
+## Month 1: Foundation & Backend Modernization (Weeks 1-6)
 
-### **Sprint 1: Backend Security & Framework Upgrades (Week 1-2)**
+### **Sprint 1: Backend Security & Framework Upgrades (Week 1-3)**
 
 #### Story PHASE3M-101: Java & Spring Boot Framework Upgrade
 **Priority:** Critical  
@@ -178,7 +178,7 @@ MOBILE APPS:
 
 ---
 
-### **Sprint 2: Database & Caching Layer (Week 3-4)**
+### **Sprint 2: Database & Caching Layer (Week 4-6)**
 
 #### Story PHASE3M-104: PostgreSQL Migration & Setup
 **Priority:** Critical  
@@ -236,9 +236,9 @@ MOBILE APPS:
 
 ---
 
-## Month 2: Mobile App Rewrite & Performance Optimization (Weeks 5-8)
+## Month 2: Mobile App Rewrite & Performance Optimization (Weeks 7-12)
 
-### **Sprint 3: Mobile Foundation (Week 5-6)**
+### **Sprint 3: Mobile Foundation (Week 7-8)**
 
 #### Story PHASE3M-201: Ionic 7 + Angular 17 Project Setup
 **Priority:** Critical  
@@ -297,7 +297,7 @@ MOBILE APPS:
 
 ---
 
-### **Sprint 4: Performance & Additional Modules (Week 7-8)**
+### **Sprint 4: Performance & Additional Modules (Week 9-12)**
 
 #### Story PHASE3M-205: Performance Optimization - Mobile
 **Priority:** High  
@@ -355,7 +355,7 @@ MOBILE APPS:
 
 ---
 
-## Month 3: Containerization, Kubernetes & Go-Live (Weeks 9-12)
+## Month 3: Containerization, Kubernetes & Go-Live (Weeks 13-16)
 
 ### **Sprint 5: Dockerization & Kubernetes Setup (Week 9-10)**
 
@@ -504,18 +504,18 @@ MOBILE APPS:
 | Month | Sprints | Focus Area | Stories | Effort (days) |
 |-------|---------|------------|---------|---------------|
 | Month 1 | Sprint 1-2 | Backend Modernization | 7 | 28 days |
-| Month 2 | Sprint 3-4 | Mobile App Rewrite | 8 | 27 days |
-| Month 3 | Sprint 5-6 | K8s & Go-Live | 9 | 27 days |
+| Month 2-3 | Sprint 3-5 | Mobile App Rewrite | 8 | 27 days |
+| Month 3-4 | Sprint 6-8 | K8s & Go-Live | 9 | 27 days |
 | **Total** | **6 Sprints** | **Complete Platform** | **24** | **82 days** |
 
 ### Team Allocation (3 months):
 
 | Role | Headcount | Allocation |
 |------|-----------|------------|
-| Backend Developer (Senior) | 1 | 100% (Month 1), 50% (Month 2-3) |
-| Mobile Developer (Senior) | 2 | 20% (Month 1), 100% (Month 2), 50% (Month 3) |
-| DevOps Engineer | 1 | 50% (Month 1), 50% (Month 2), 100% (Month 3) |
-| QA Engineer | 1 | 30% (Month 1-2), 80% (Month 3) |
+| Backend Developer (Senior) | 1 | 100% (Month 1), 50% (Month 2-3-4) |
+| Mobile Developer (Senior) | 2 | 20% (Month 1), 100% (Month 2), 50% (Month 3, 4) |
+| DevOps Engineer | 1 | 50% (Month 1), 50% (Month 2,4), 100% (Month 3, 4) |
+| QA Engineer | 1 | 30% (Month 1-2), 60% (Month 3,4) |
 | Architect/Tech Lead | 1 | 30% across all months |
 
 ### Key Milestones:
@@ -524,7 +524,7 @@ MOBILE APPS:
 |-----------|-------------|--------------|
 | M1: Backend Upgraded | End of Month 1 | Java 17, Spring Security, PostgreSQL with Read Replica, Redis Caching |
 | M2: Mobile App Ready | End of Month 2 | Ionic 7 app complete, tested on iOS/Android, performance optimized |
-| M3: Production Ready | End of Month 3 | Dockerized, deployed to Kubernetes, monitoring active, production cutover |
+| M3: Production Ready | End of Month 4 | Dockerized, deployed to Kubernetes, monitoring active, production cutover |
 
 ### Risk Mitigation:
 
@@ -570,7 +570,7 @@ MOBILE APPS:
 
 ## Conclusion
 
-This 3-month phased approach delivers a **production-ready, modernized SmartNeta platform** with:
+This 4-month phased approach delivers a **production-ready, modernized SmartNeta platform** with:
 
 ✅ **Fixed performance issues** (p95 < 200ms, 1000+ rps sustained)  
 ✅ **Completely rewritten mobile app** (Ionic 7 + Angular 17 + Capacitor)  
@@ -579,4 +579,6 @@ This 3-month phased approach delivers a **production-ready, modernized SmartNeta
 ✅ **Database scalability** (PostgreSQL with read replica, 60% read offload)  
 ✅ **Intelligent caching** (Redis with multi-tier strategy, >70% cache hits)  
 ✅ **Production monitoring** (Prometheus, Grafana, ELK stack, alerting)
+
+
 
