@@ -1,4 +1,4 @@
-# SmartNeta 3-Month Phased Modernization Plan
+# SmartNeta 4-Month Phased Modernization Plan
 
 **Timeline:** 4 months (2.5 months development + 1 month testing/deployment + 0.5 months for performance testing)  
 **Objective:** Fix performance issues, rewrite mobile app, upgrade backend security, dockerize and deploy to Kubernetes with database read replicas and intelligent caching
