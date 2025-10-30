@@ -74,8 +74,8 @@
 
 EXTERNAL INTEGRATIONS:
 ┌─────────────────┐      ┌──────────────────┐      ┌─────────────────┐
-│   SMS Gateway   │◄─────┤  Message Queue   │─────►│  Email Service  │
-│   (Twilio/MSG91)│      │  (RabbitMQ/SQS)  │      │  (SendGrid)     │
+│   SMS Gateway   │◄─────┤  Google Maps     │─────►│  Email Service  │
+│   (IISSMS)      │      │  APNS/FCM        │      │ (JavaMail/SMTP) │
 └─────────────────┘      └──────────────────┘      └─────────────────┘
 
 MOBILE APPS:
@@ -121,7 +121,7 @@ MOBILE APPS:
 
 ---
 
-## 2. JIRA Stories for 3-Month Delivery
+## 2. JIRA Stories for 4-Month Delivery
 
 ### **EPIC: PHASE3M-001 - SmartNeta 4-Month Modernization**
 
@@ -508,7 +508,7 @@ MOBILE APPS:
 | Month 3-4 | Sprint 6-8 | K8s & Go-Live | 9 | 27 days |
 | **Total** | **6 Sprints** | **Complete Platform** | **24** | **82 days** |
 
-### Team Allocation (3 months):
+### Team Allocation (4 months):
 
 | Role | Headcount | Allocation |
 |------|-----------|------------|
